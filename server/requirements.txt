@@ -1,4 +1,9 @@
 fastapi
 uvicorn
 pydantic
+pydantic-settings
+sqlalchemy
+psycopg2-binary
+
+
 #TODO: agregar la librería para reconocimiento facial
