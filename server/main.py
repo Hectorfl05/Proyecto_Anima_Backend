@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
+# Password hashing
+from passlib.context import CryptContext
+
 import os
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
@@ -46,22 +49,18 @@ class AuthPayload(BaseModel):
 
 temp_memory_db = {"Items": []}
 
+# Simple in-memory users store for demo purposes
+# In production replace with a real persistent DB
+users_store = {}
+
+# Passlib context for password hashing.
+# Use pbkdf2_sha256 for development to avoid bcrypt C-extension build issues on some systems.
+# In production, prefer bcrypt or argon2 and ensure the environment has the required dependencies.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
 
 # --- API router (backend controls client <-> DB communication here) ---
 api_router = APIRouter(prefix="/api")
-
-
-@api_router.get("/items", response_model=Items)
-async def get_items():
-    return Items(items=temp_memory_db["Items"])
-
-
-@api_router.post("/items", response_model=Item, status_code=status.HTTP_201_CREATED)
-async def add_item(item: Item):
-    # In a real app you'd validate and persist to a database here
-    temp_memory_db["Items"].append(item)
-    return item
-
 
 @api_router.post("/auth/signin")
 async def signin(payload: AuthPayload):
@@ -69,11 +68,23 @@ async def signin(payload: AuthPayload):
 
     Replace with real authentication (DB lookup, password hashing, token creation).
     """
-    # Example placeholder: accept any non-empty email/password
+    # Basic validation
     if not payload.email or not payload.password:
         raise HTTPException(status_code=400, detail="Email and password required")
-    # Return a dummy token (replace with JWT or session creation)
-    return {"access_token": "fake-token-for-{}".format(payload.email), "token_type": "bearer"}
+
+    # (debug logging removed)
+
+    # Lookup user in in-memory store
+    user = users_store.get(payload.email)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Verify password (bcrypt)
+    if not pwd_context.verify(payload.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # On success return a simple token (replace with JWT in real app)
+    return {"access_token": f"fake-token-for-{payload.email}", "token_type": "bearer"}
 
 
 class RegisterPayload(BaseModel):
@@ -90,11 +101,24 @@ async def signup(payload: RegisterPayload):
     """
     if not payload.email or not payload.password or not payload.name:
         raise HTTPException(status_code=400, detail="Name, email and password are required")
+
+    # (debug logging removed)
+
     # Fake check: disallow emails with @test.com as demo
     if "@test.com" in payload.email:
         raise HTTPException(status_code=409, detail="Email already registered")
-    # Return a minimal created resource representation
-    return {"id": 1, "name": payload.name, "email": payload.email}
+
+    # Check for existing user
+    if payload.email in users_store:
+        raise HTTPException(status_code=409, detail="Email already registered")
+
+    # Hash password with bcrypt and store user
+    password_hash = pwd_context.hash(payload.password)
+    user = {"id": len(users_store) + 1, "name": payload.name, "email": payload.email, "password_hash": password_hash}
+    users_store[payload.email] = user
+
+    # Return created user without password
+    return {"id": user["id"], "name": user["name"], "email": user["email"]}
 
 
 app.include_router(api_router)

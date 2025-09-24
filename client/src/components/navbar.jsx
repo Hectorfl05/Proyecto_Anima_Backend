@@ -2,12 +2,23 @@ import React, { useState, useEffect } from 'react';
 import './navbar.css';
 import Button from './Button';
 import { LOGO_SRC } from '../constants/assets';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 
 function Navbar() {
   const [open, setOpen] = useState(false);
 
   const toggle = () => setOpen((s) => !s);
+
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  const isAuthenticatedArea = location && location.pathname && location.pathname.startsWith('/home');
+
+  const handleLogoff = () => {
+    // remove token and redirect to signin
+    localStorage.removeItem('access_token');
+    navigate('/signin');
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -46,8 +57,17 @@ function Navbar() {
             <span className="bar" />
           </button>
           <ul className="navlist actions">
-            <li><Button to="/signin" className="signin">Sign In</Button></li>
-            <li><Button to="/signup" className="signup">Sign Up</Button></li>
+            {isAuthenticatedArea ? (
+              <>
+                <li><Button to="/home/account" className="account">Account</Button></li>
+                <li><button className="btn logoff" onClick={handleLogoff}>Log off</button></li>
+              </>
+            ) : (
+              <>
+                <li><Button to="/signin" className="signin">Sign In</Button></li>
+                <li><Button to="/signup" className="signup">Sign Up</Button></li>
+              </>
+            )}
           </ul>
         </div>
       </div>
@@ -66,8 +86,17 @@ function Navbar() {
           <li><Link to="/contact" onClick={() => setOpen(false)}>Contact</Link></li>
         </ul>
         <div className="mobile-actions">
-          <Button to="/signin" className="signin" onClick={() => setOpen(false)}>Sign In</Button>
-          <Button to="/signup" className="signup" onClick={() => setOpen(false)}>Sign Up</Button>
+          {isAuthenticatedArea ? (
+            <>
+              <Button to="/home/account" className="account" onClick={() => setOpen(false)}>Account</Button>
+              <button className="btn logoff" onClick={() => { setOpen(false); handleLogoff(); }}>Log off</button>
+            </>
+          ) : (
+            <>
+              <Button to="/signin" className="signin" onClick={() => setOpen(false)}>Sign In</Button>
+              <Button to="/signup" className="signup" onClick={() => setOpen(false)}>Sign Up</Button>
+            </>
+          )}
         </div>
       </div>
     </nav>
