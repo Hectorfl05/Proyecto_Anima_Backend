@@ -1,9 +1,11 @@
-fastapi
-uvicorn
-pydantic[email]
-pydantic-settings
-sqlalchemy
-psycopg2-binary
-python-jose
-passlib[bcrypt]
-#TODO: agregar la librería para reconocimiento facial
+fastapi==0.95.2
+uvicorn[standard]==0.22.0
+pydantic[email]==1.10.12
+pydantic-settings==0.1.1
+sqlalchemy==1.4.49
+psycopg2-binary==2.9.7
+python-jose==3.3.0
+# Use passlib for password hashing; in development the project uses pbkdf2_sha256 to avoid bcrypt C-extension
+# For production, prefer bcrypt or argon2 and ensure native dependencies are installed.
+passlib[bcrypt]==1.7.4
+# TODO: agregar la librería para reconocimiento facial

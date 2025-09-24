@@ -39,9 +39,9 @@ const SignInPage = () => {
   const data = await res.json();
   // store token (in memory/localStorage) — simple demo
   localStorage.setItem('access_token', data.access_token);
-  // redirect to original page (if any) or protected homepage
+  // redirect to original page (if any) or protected homepage and pass a success flash message via location state
   const returnTo = (location && location.state && location.state.from && location.state.from.pathname) ? location.state.from.pathname : '/home';
-  navigate(returnTo);
+  navigate(returnTo, { state: { flash: 'Signed in successfully' } });
       
     } catch (err) {
       console.error('Sign in error:', err);

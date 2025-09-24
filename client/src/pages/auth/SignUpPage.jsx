@@ -42,9 +42,9 @@ const SignUpPage = () => {
         throw new Error(err.detail || 'Registration failed');
       }
 
-  // success — redirect to original page (if present) or to protected homepage
+  // success — redirect to original page (if present) or to protected homepage and pass a success flash message via location state
   const returnTo = (location && location.state && location.state.from && location.state.from.pathname) ? location.state.from.pathname : '/home';
-  navigate(returnTo);
+  navigate(returnTo, { state: { flash: 'Registration successful' } });
       
     } catch (err) {
       console.error('Sign up error:', err);
