@@ -76,6 +76,27 @@ async def signin(payload: AuthPayload):
     return {"access_token": "fake-token-for-{}".format(payload.email), "token_type": "bearer"}
 
 
+class RegisterPayload(BaseModel):
+    name: str
+    email: str
+    password: str
+
+
+@api_router.post("/auth/signup", status_code=status.HTTP_201_CREATED)
+async def signup(payload: RegisterPayload):
+    """Placeholder signup endpoint.
+
+    Replace with real registration logic (DB insert, password hashing, validation).
+    """
+    if not payload.email or not payload.password or not payload.name:
+        raise HTTPException(status_code=400, detail="Name, email and password are required")
+    # Fake check: disallow emails with @test.com as demo
+    if "@test.com" in payload.email:
+        raise HTTPException(status_code=409, detail="Email already registered")
+    # Return a minimal created resource representation
+    return {"id": 1, "name": payload.name, "email": payload.email}
+
+
 app.include_router(api_router)
 
 

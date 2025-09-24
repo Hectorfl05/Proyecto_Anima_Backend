@@ -12,20 +12,18 @@ const SignUpPage = () => {
     setError('');
     
     try {
-      // Here you would normally make an API call to create a user
-      console.log('Signing up with:', formData);
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Placeholder for registration logic
-      // For demo purposes, let's pretend any email with '@test.com' is already taken
-      if (formData.email.includes('@test.com')) {
-        throw new Error('Email is already registered');
+      const res = await fetch('/api/auth/signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Registration failed');
       }
-      
-      // On success, redirect or update app state
-      // Example: history.push('/signin')
+
+      // success
       alert('Account created successfully! Please sign in.');
       
     } catch (err) {

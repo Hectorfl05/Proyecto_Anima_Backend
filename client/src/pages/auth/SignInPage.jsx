@@ -12,20 +12,21 @@ const SignInPage = () => {
     setError('');
     
     try {
-      // Here you would normally make an API call to authenticate
-      console.log('Signing in with:', formData);
-      
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Placeholder for authentication logic
-      // For demo purposes, let's pretend any email with password 'password123' is valid
-      if (formData.password !== 'password123') {
-        throw new Error('Invalid email or password');
+      // Call backend signin endpoint
+      const res = await fetch('/api/auth/signin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: formData.email, password: formData.password })
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Invalid email or password');
       }
-      
-      // On success, redirect or update app state
-      // Example: history.push('/dashboard')
+
+      const data = await res.json();
+      // store token (in memory/localStorage) — simple demo
+      localStorage.setItem('access_token', data.access_token);
       alert('Sign in successful!');
       
     } catch (err) {
