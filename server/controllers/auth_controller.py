@@ -6,6 +6,7 @@ from server.db.session import SessionLocal
 from sqlalchemy.orm import Session
 from server.db.models.user import User
 
+
 def register_user(db: Session, user: UserCreate) -> UserResponse:
 
     existing_user = db.query(User).filter(User.email == user.email).first()
@@ -38,6 +39,5 @@ def login_user(db: Session, user: UserLogin) -> TokenResponse:
         )
     access_token = create_access_token(data={"sub": db_user.email})
     return TokenResponse(access_token=access_token)  # ← ¡Este return es esencial!
-    
-    
-  
+
+
