@@ -19,34 +19,23 @@ SPOTIFY_API_BASE_URL = "https://api.spotify.com/v1"
 
 
 
-
-def get_spotify_auth_url():
-    state = secrets.token_urlsafe(16)
+def get_spotify_auth_url(state: str):
 
     scopes = "user-read-email playlist-modify-private user-top-read"
     auth_url = f"{SPOTIFY_AUTH_URL}?response_type=code&client_id={CLIENT_ID}&scope={scopes}&redirect_uri={REDIRECT_URI}&state={state}"
     return auth_url
 
 
-def get_spotify_token(code:str, expected_state:Optional[str] = None, received_state:Optional[str] = None) -> Dict:
-
+def get_spotify_token(code: str) -> Dict:
     """
     Intercambia un código de autorización por un token de acceso
     
     Args:
         code: Código de autorización recibido en el callback
-        expected_state: State que esperamos recibir (de la sesión)
-        received_state: State que recibimos en el callback
     
     Returns:
         Dict con token data (access_token, refresh_token, etc.)
     """
-
-    if expected_state and received_state:
-        if expected_state != received_state:
-            raise ValueError("State parameter mismatch - possible CSRF attack")
-    elif expected_state or received_state:
-        raise ValueError("Both expected_state and received_state must be provided for verification")
     
     payload = {
         "grant_type": "authorization_code",
@@ -115,7 +104,7 @@ def get_recommendations(access_token: str, emotion: str) -> Dict:
             response = requests.get(url, headers=headers, params=params)
             
 
-            if response.status.code == 401:
+            if response.status_code == 401:
                 return {
                     "error": "token_expired",
                     "message": "El token de acceso ha caducado",
