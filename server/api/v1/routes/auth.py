@@ -8,12 +8,12 @@ from server.schemas.user import UserCreate, UserResponse
 from server.schemas.auth import UserLogin, TokenResponse
 from server.controllers.auth_controller import register_user, login_user
 from server.services.spotify import get_spotify_auth_url, get_spotify_token
-import secrets
-
+from server.controllers.auth_controller import logout_user
 from server.core.security import verify_token, create_access_token
 from server.db.models.user import User
 from server.core.config import settings
-
+from pydantic import BaseModel
+import secrets
 # Temporary in-memory store for tokens returned by Spotify callback keyed by the 'state'
 # This is simple and OK for development; for production use a persistent/short-lived store
 # (Redis, DB, etc.) and rotate/expire entries.
@@ -54,7 +54,7 @@ def spotify_callback(
     """
     if error:
         # Usuario canceló o Spotify devolvió error → redirigir al frontend con el error
-        return RedirectResponse(url=f"http://127.0.0.1:3000/home/spotify-connect?error={error}&state={state}")
+        return RedirectResponse(url=f"http://127.0.0.1:3000/spotify-callback?error={error}&state={state}")
     
     if not code:
         raise HTTPException(status_code=400, detail="Código de autorización no recibido")
@@ -76,13 +76,12 @@ def spotify_callback(
         }
 
         # Redirect back to frontend which will read `state` and call the exchange endpoint
-        response = RedirectResponse(url=f"http://127.0.0.1:3000/home/spotify-connect?state={state}")
-        return response
+        return RedirectResponse(url=f"http://127.0.0.1:3000/spotify-callback?state={state}")
 
     except Exception as e:
         # Redirigir al frontend con un indicador de error genérico
         print(f"HTTP error: {e} - Path: {request.url}")
-        return RedirectResponse(url=f"http://127.0.0.1:3000/home/spotify-connect?error=token_exchange_failed&state={state}")
+        return RedirectResponse(url=f"http://127.0.0.1:3000/spotify-callback?error=token_exchange_failed&state={state}")
 
 
 @router.get("/spotify/status")
@@ -207,11 +206,10 @@ def spotify_exchange(state: str = Query(...)):
     jwt_token = create_access_token(payload, expires_delta=expires)
     return {"spotify_jwt": jwt_token}
 
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request, Response, Header
-from server.core.security import verify_token
-from server.db.models.user import User
 
-# ... código existente ...
+
+class LogoutRequest(BaseModel):
+    session_id: int
 
 @router.get("/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
 def get_current_user(
@@ -263,3 +261,12 @@ def get_current_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al obtener información del usuario"
         )
+
+@router.post("/logout", status_code=200)
+def logout(payload: LogoutRequest, db: Session = Depends(get_db)):
+    """
+    Ends the session by setting fecha_fin for the given session_id.
+    """
+   
+    success = logout_user(db, payload.session_id)
+    return {"success": success}

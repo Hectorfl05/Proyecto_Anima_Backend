@@ -4,10 +4,16 @@ from typing import Dict
 import random
 import base64
 import io
+import requests
 from PIL import Image
 from server.services.aws_rekognition_service import rekognition_service
 from server.core.config import settings
 from botocore.exceptions import BotoCoreError, ClientError
+from datetime import datetime
+from server.core.security import verify_token
+from server.db.models.user import User
+from server.db.session import get_db
+from sqlalchemy.orm import Session
 
 router = APIRouter(prefix="/v1/analysis", tags=["analysis"])
 
@@ -20,6 +26,7 @@ class EmotionAnalysisResponse(BaseModel):
     emotions_detected: Dict[str, float]
     timestamp: str
     message: str
+    recommendations: list = []  # Agregar recomendaciones a la respuesta
 
 # 🎭 Datos mockup de emociones
 MOCK_EMOTIONS = {
@@ -80,6 +87,18 @@ MOCK_EMOTIONS = {
     }
 }
 
+# Mapping from AWS Rekognition emotion types to our app emotion keys (reusable)
+AWS_TO_APP = {
+    'HAPPY': 'happy',
+    'SAD': 'sad',
+    'ANGRY': 'angry',
+    'CALM': 'relaxed',
+    'SURPRISED': 'energetic',
+    'CONFUSED': 'relaxed',
+    'DISGUSTED': 'angry',
+    'FEAR': 'sad'
+}
+
 def validate_image_base64(image_data: str) -> bool:
     """
     Valida que la imagen en base64 sea válida
@@ -102,6 +121,55 @@ def validate_image_base64(image_data: str) -> bool:
     except Exception as e:
         print(f"❌ Error validando imagen: {e}")
         return False
+
+def get_music_recommendations(authorization: str, emotion: str) -> list:
+    """
+    Obtiene recomendaciones musicales para la emoción detectada
+    """
+    try:
+        # Extraer token de Spotify si está disponible
+        jwt = None
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+            try:
+                payload = verify_token(token)
+                spotify_info = payload.get('spotify')
+                if spotify_info and spotify_info.get('access_token'):
+                    jwt = authorization  # Usar el JWT completo
+            except:
+                pass
+        
+        # Intentar obtener recomendaciones con Spotify
+        if jwt:
+            try:
+                response = requests.get(
+                    f"http://127.0.0.1:8000/recommend?emotion={emotion}",
+                    headers={"Authorization": jwt},
+                    timeout=10
+                )
+                if response.ok:
+                    data = response.json()
+                    return data.get('tracks', [])
+            except:
+                pass
+        
+        # Fallback a recomendaciones mockup
+        try:
+            response = requests.get(
+                f"http://127.0.0.1:8000/recommend/mockup?emotion={emotion}",
+                timeout=10
+            )
+            if response.ok:
+                data = response.json()
+                return data.get('tracks', [])
+        except:
+            pass
+        
+        return []
+        
+    except Exception as e:
+        print(f"❌ Error obteniendo recomendaciones: {e}")
+        return []
 
 @router.post("/analyze-base64", response_model=EmotionAnalysisResponse, status_code=status.HTTP_200_OK)
 async def analyze_emotion_base64(
@@ -149,19 +217,7 @@ async def analyze_emotion_base64(
         # If AWS credentials are configured, try to use Rekognition. Otherwise fallback to mockup.
         use_aws = bool(getattr(settings, 'AWS_ACCESS_KEY_ID', None) and getattr(settings, 'AWS_SECRET_ACCESS_KEY', None))
 
-        # Mapping from AWS Rekognition emotion types to our app emotion keys
-        aws_to_app = {
-            'HAPPY': 'happy',
-            'SAD': 'sad',
-            'ANGRY': 'angry',
-            'CALM': 'relaxed',
-            'SURPRISED': 'energetic',
-            'CONFUSED': 'relaxed',
-            'DISGUSTED': 'angry',
-            'FEAR': 'sad'
-        }
-
-        from datetime import datetime
+        emotion_data = None
 
         if use_aws:
             try:
@@ -169,13 +225,13 @@ async def analyze_emotion_base64(
                 result = await rekognition_service.detect_faces(image_bytes)
 
                 if not result.get('success'):
-                    # Fallback to mockup if AWS call failed
+                    # Rekognition call failed -> log and fallthrough to mockup
                     raise Exception(result.get('error', 'AWS Rekognition returned an error'))
 
                 faces = result.get('faces', [])
                 if not faces:
-                    # No faces detected -> fallback to mockup
-                    raise Exception('No faces detected')
+                    # No faces detected -> return an explicit error for uploaded images
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se detectaron rostros humanos en la imagen")
 
                 # Use first face for emotion analysis
                 emotions_list = faces[0].get('emotions', [])
@@ -186,7 +242,7 @@ async def analyze_emotion_base64(
                     typ = e.get('Type') or e.get('type') or e.get('emotion')
                     conf = e.get('Confidence') or e.get('confidence') or 0.0
                     conf = float(conf) / 100.0
-                    key = aws_to_app.get(typ.upper(), typ.lower() if isinstance(typ, str) else str(typ))
+                    key = AWS_TO_APP.get(typ.upper(), typ.lower() if isinstance(typ, str) else str(typ))
                     if key in emotions_detected:
                         emotions_detected[key] += conf
                     else:
@@ -215,21 +271,31 @@ async def analyze_emotion_base64(
                 }
 
                 print(f"✅ Análisis Rekognition: {app_top} ({emotion_data['confidence']*100:.1f}%)")
-                return EmotionAnalysisResponse(**emotion_data)
 
             except (BotoCoreError, ClientError) as be:
                 print(f"❌ AWS Rekognition error: {be}")
                 # Fallthrough to mockup
+            except HTTPException:
+                # Re-raise explicit HTTPExceptions (e.g., no faces detected)
+                raise
             except Exception as e:
                 print(f"❌ Rekognition processing error: {e}")
                 # Fallthrough to mockup
 
-        # If we reach here, use mockup behavior (previous implementation)
-        emotion_key = random.choice(list(MOCK_EMOTIONS.keys()))
-        emotion_data = MOCK_EMOTIONS[emotion_key].copy()
-        emotion_data["timestamp"] = datetime.utcnow().isoformat()
-        emotion_data["message"] = f"Análisis completado exitosamente (modo mockup)"
-        print(f"✅ Análisis mockup: {emotion_key} ({emotion_data['confidence']*100:.1f}%)")
+        # If we reach here and don't have emotion_data, use mockup behavior
+        if not emotion_data:
+            emotion_key = random.choice(list(MOCK_EMOTIONS.keys()))
+            emotion_data = MOCK_EMOTIONS[emotion_key].copy()
+            emotion_data["timestamp"] = datetime.utcnow().isoformat()
+            emotion_data["message"] = f"Análisis completado exitosamente (modo mockup)"
+            print(f"✅ Análisis mockup: {emotion_key} ({emotion_data['confidence']*100:.1f}%)")
+        
+        # 🆕 Obtener recomendaciones musicales
+        recommendations = get_music_recommendations(authorization, emotion_data['emotion'])
+        emotion_data['recommendations'] = recommendations
+        
+        print(f"🎵 Recomendaciones obtenidas: {len(recommendations)} tracks")
+        
         return EmotionAnalysisResponse(**emotion_data)
         
     except HTTPException:
@@ -280,17 +346,84 @@ async def analyze_emotion_file(
                 detail="Archivo de imagen corrupto o inválido"
             )
         
-        # 🎲 Seleccionar emoción aleatoria (MOCKUP)
-        emotion_key = random.choice(list(MOCK_EMOTIONS.keys()))
-        emotion_data = MOCK_EMOTIONS[emotion_key].copy()
-        
-        # Agregar timestamp
-        from datetime import datetime
-        emotion_data["timestamp"] = datetime.utcnow().isoformat()
-        emotion_data["message"] = f"Análisis completado exitosamente (modo mockup)"
-        
-        print(f"✅ Análisis mockup (file): {emotion_key} ({emotion_data['confidence']*100:.1f}%)")
-        
+        # If AWS credentials are configured, try to use Rekognition for face/emotion detection.
+        use_aws = bool(getattr(settings, 'AWS_ACCESS_KEY_ID', None) and getattr(settings, 'AWS_SECRET_ACCESS_KEY', None))
+
+        emotion_data = None
+
+        if use_aws:
+            try:
+                result = await rekognition_service.detect_faces(contents)
+                if not result.get('success'):
+                    # Rekognition failed -> log and fallthrough to mockup
+                    raise Exception(result.get('error', 'AWS Rekognition returned an error'))
+
+                faces = result.get('faces', [])
+                if not faces:
+                    # No faces detected -> return explicit error for uploaded images
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No se detectaron rostros humanos en la imagen")
+
+                # Use first face for emotion analysis
+                emotions_list = faces[0].get('emotions', [])
+
+                emotions_detected = {}
+                for e in emotions_list:
+                    typ = e.get('Type') or e.get('type') or e.get('emotion')
+                    conf = e.get('Confidence') or e.get('confidence') or 0.0
+                    conf = float(conf) / 100.0
+                    key = AWS_TO_APP.get(typ.upper(), typ.lower() if isinstance(typ, str) else str(typ))
+                    if key in emotions_detected:
+                        emotions_detected[key] += conf
+                    else:
+                        emotions_detected[key] = conf
+
+                # Normalize
+                mapped_total = sum(emotions_detected.values())
+                if mapped_total > 0:
+                    for k in list(emotions_detected.keys()):
+                        emotions_detected[k] = round(emotions_detected[k] / mapped_total, 3)
+
+                if emotions_detected:
+                    app_top = max(emotions_detected, key=lambda k: emotions_detected[k])
+                    top_conf = emotions_detected[app_top]
+                else:
+                    app_top = None
+                    top_conf = 0.0
+
+                emotion_data = {
+                    'emotion': app_top,
+                    'confidence': round(top_conf, 4),
+                    'emotions_detected': emotions_detected,
+                    'timestamp': datetime.utcnow().isoformat(),
+                    'message': 'Análisis completado exitosamente (AWS Rekognition)'
+                }
+
+                print(f"✅ Análisis Rekognition (file): {app_top} ({emotion_data['confidence']*100:.1f}%)")
+
+            except (BotoCoreError, ClientError) as be:
+                print(f"❌ AWS Rekognition error (file): {be}")
+                # Fallthrough to mockup
+            except HTTPException:
+                # Re-raise explicit HTTPExceptions (e.g., no faces detected)
+                raise
+            except Exception as e:
+                print(f"❌ Rekognition processing error (file): {e}")
+                # Fallthrough to mockup
+
+        # If we don't have emotion_data from AWS, use mockup behavior
+        if not emotion_data:
+            emotion_key = random.choice(list(MOCK_EMOTIONS.keys()))
+            emotion_data = MOCK_EMOTIONS[emotion_key].copy()
+            emotion_data["timestamp"] = datetime.utcnow().isoformat()
+            emotion_data["message"] = f"Análisis completado exitosamente (modo mockup)"
+            print(f"✅ Análisis mockup (file): {emotion_key} ({emotion_data['confidence']*100:.1f}%)")
+
+        # 🆕 Obtener recomendaciones musicales
+        recommendations = get_music_recommendations(authorization, emotion_data['emotion'])
+        emotion_data['recommendations'] = recommendations
+
+        print(f"🎵 Recomendaciones obtenidas: {len(recommendations)} tracks")
+
         return EmotionAnalysisResponse(**emotion_data)
         
     except HTTPException:

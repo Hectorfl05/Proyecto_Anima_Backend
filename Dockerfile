@@ -1,33 +1,37 @@
-# Use a small, supported Python base image
 FROM python:3.11-slim
 
-LABEL maintainer="Proyecto Anima <noreply@example.com>"
+# Evita archivos .pyc y buffer en stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
-# Environment
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+WORKDIR /app
 
+# Instalar dependencias del sistema (solo las necesarias)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential \
        gcc \
        libpq-dev \
+       libjpeg-dev \
+       zlib1g-dev \
        curl \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Copiar requirements.txt desde la carpeta server/
+COPY server/requirements.txt ./
 
-COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r server\requirements.txt
+# Instalar dependencias Python
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r requirements.txt
 
+# Copiar todo el código de la carpeta server al contenedor
+COPY ./server /app/server
 
-COPY . /app
-
-RUN useradd --create-home appuser \
-    && chown -R appuser:appuser /app
+# Crear usuario no root
+RUN useradd -m appuser && chown -R appuser /app
 USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+# Comando para iniciar el servidor
+CMD ["uvicorn", "server.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
